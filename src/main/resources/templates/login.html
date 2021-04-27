@@ -15,10 +15,13 @@
     <script type="text/javascript" th:src="@{/js/respond.min.js}" ></script>
     <![endif]-->
 
+    <style th:if="${buttonBackgroundColor  != null}" th:text="'.btn-danger {background-color: ' + ${buttonBackgroundColor} + ';} .btn-danger:hover {background-color: ' + ${buttonHoverBackgroundColor} + ';}'"></style>
+    <style th:unless="${displayStandards == 'BerlinGroup'}"></style>
+
 <body>
 <nav class="navbar navbar-light bg-light">
     <a class="navbar-brand" th:href="@{${application.obp_url}}">
-        <img th:src="@{/images/logo.png}" height="60" class="d-inline-block align-top" alt="">
+        <img th:src="@{/images/bank-logo.png}" height="60" class="d-inline-block align-top" alt="">
     </a>
 </nav>
 
@@ -47,7 +50,7 @@
                             <label for="remember-me">
                                 <input id="remember-me" name="rememberMe" type="checkbox" th:checked="${rememberMe}">
                                 <span> Remember me</span></label><br>
-                            <input type="submit" name="submit" class="btn btn-info btn-md" value="submit">
+                            <input type="submit" name="submit" class="btn btn-danger btn-md" value="submit">
                         </div>
                     </form>
                 </div>

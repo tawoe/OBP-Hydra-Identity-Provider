@@ -1,15 +1,15 @@
 package com.openbankproject.oauth2;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nimbusds.jose.JWSObject;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.openbankproject.JwsUtil;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang3.ArrayUtils;
-import org.apache.http.Header;
-import org.apache.http.HttpEntity;
-import org.apache.http.HttpEntityEnclosingRequest;
-import org.apache.http.HttpRequest;
+import org.apache.http.*;
 import org.apache.http.client.HttpClient;
-import org.apache.http.client.methods.HttpRequestWrapper;
 import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.entity.BufferedHttpEntity;
 import org.apache.http.impl.client.HttpClients;
@@ -22,6 +22,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
+import sun.security.provider.X509Factory;
 
 import javax.net.ssl.*;
 import java.io.*;
@@ -30,13 +31,13 @@ import java.net.UnknownHostException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
-import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.security.interfaces.RSAPublicKey;
+import java.text.ParseException;
+import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -47,6 +48,8 @@ public class RestTemplateConfig {
     private Resource keyStoreResource;
     @Value("${mtls.keyStore.password}")
     private char[] keyStorePassword;
+    @Value("${mtls.keyStore.alias}")
+    private String keyStoreAlias;
     @Value("${mtls.trustStore.path}")
     private Resource trustStoreResource;
     @Value("${mtls.trustStore.password}")
@@ -61,6 +64,7 @@ public class RestTemplateConfig {
         HttpClient httpClient = HttpClients.custom()
                 .setSSLSocketFactory(socketFactory)
                 .addInterceptorLast(this::requestIntercept)
+                .addInterceptorFirst(this::responseIntercept)
                 .build();
 
         HttpComponentsClientHttpRequestFactory factory = new HttpComponentsClientHttpRequestFactory(httpClient);
@@ -100,6 +104,87 @@ public class RestTemplateConfig {
         return trustManagerFactory.getTrustManagers();
     }
 
+    public String getOrEmptyValue(String name, org.apache.http.HttpResponse response) {
+        if(response.getFirstHeader(name) != null) {
+            return response.getFirstHeader(name).getValue();
+        } else {
+            return "";
+        }
+    }
+    private void responseIntercept(org.apache.http.HttpResponse response, HttpContext httpContext) {
+        HttpRequest req = (HttpRequest)httpContext.getAttribute("http.request");
+        String uri = req.getRequestLine().getUri();
+        if(forceJws(uri)) {
+            // Transform non-repeatable entity => repeatable entity.
+            makeInputStreamOfEntityRepeatable(response);
+
+            String xJwsSignature = getOrEmptyValue("x-jws-signature", response);
+            String digest = getOrEmptyValue("digest", response);
+            String verb = req.getRequestLine().getMethod().toLowerCase();
+
+            // Get HTTP body from the response
+            String httpBody = "";
+            try {
+                httpBody = getHttpResponseBody(response.getEntity().getContent()).toString();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            String jwsProtectedHeaderAsString = "";
+            String rebuiltDetachedPayload = "";
+            String x5c = "";
+            String sigT = "";
+            try {
+                // Extract JOSE Protected Header and certain values of it
+                jwsProtectedHeaderAsString = JWSObject.parse(xJwsSignature).getHeader().toString();
+                JsonNode jphNode = new ObjectMapper().readTree(jwsProtectedHeaderAsString);
+                x5c = jphNode.get("x5c").toString().replace("[", "")
+                        .replace("]", "").replace("\"", "");
+                sigT = jphNode.get("sigT").toString().replace("[", "")
+                        .replace("]", "").replace("\"", "");
+
+                // Recreate detached payload
+                String parsString = (String)jphNode.get("sigD").get("pars").toString();
+                String[] pars = parsString.replace("[", "")
+                        .replace("]", "").split(",");
+                String name = "";
+                for (String nameWithQuotes : Arrays.asList(pars)) {
+                    name = nameWithQuotes.replace("\"", "");
+                    if(name.equalsIgnoreCase("(status-line)")) {
+                        rebuiltDetachedPayload = rebuiltDetachedPayload + name + ": " + verb + " " + uri + "\n";
+                    } else {
+                        rebuiltDetachedPayload = rebuiltDetachedPayload + name + ": " + response.getFirstHeader(name).getValue() + "\n";
+                    }
+                }
+            } catch (ParseException | JsonProcessingException e) {
+                e.printStackTrace();
+            }
+            String pem = X509Factory.BEGIN_CERT + x5c + X509Factory.END_CERT;
+            // Verify JWS
+            boolean isVerifiedJws = JwsUtil.verifyJwsSignature(sigT, httpBody, xJwsSignature, digest, pem, rebuiltDetachedPayload);
+            if(!isVerifiedJws) {
+                ProtocolVersion version = response.getStatusLine().getProtocolVersion();
+                response.setStatusLine(version, 400, "The signed response cannot be verified.");
+            }
+        }
+    }
+
+    /**
+     * Transform non-repeatable entity => repeatable entity.
+     * Repeatable entity is the entity capable of producing its data more than once.
+     * A repeatable entity's getContent() and writeTo(OutputStream) methods
+     * can be called more than once whereas a non-repeatable entity's can not.
+     */
+    private void makeInputStreamOfEntityRepeatable(HttpResponse response) {
+        final HttpEntity entity = response.getEntity();
+        if (entity != null) {
+            try {
+                response.setEntity(new BufferedHttpEntity(entity));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
     private void requestIntercept(org.apache.http.HttpRequest request, HttpContext httpContext) {
         Header[] headers = request.getHeaders(HttpHeaders.CONTENT_TYPE);
         if(ArrayUtils.isEmpty(headers)) {
@@ -177,9 +262,25 @@ public class RestTemplateConfig {
         return httpBody;
     }
 
+    private StringBuilder getHttpResponseBody(InputStream inputStream) {
+        StringBuilder httpBody = new StringBuilder();
+        try {
+            try (Reader reader = new BufferedReader(new InputStreamReader
+                    (inputStream, Charset.forName(StandardCharsets.UTF_8.name())))) {
+                int c = 0;
+                while ((c = reader.read()) != -1) {
+                    httpBody.append((char) c);
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return httpBody;
+    }
+
     private HashMap<String, Object> getRsaKey() {
         KeyStore ks = null;
-        String alias = "1";
+        String alias = keyStoreAlias;
         Key key = null;
         try {
             ks = KeyStore.getInstance("jks");
