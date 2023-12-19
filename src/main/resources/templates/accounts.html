@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>OBP Identity Provider - Grant Access</title>
+    <title>OBP ID - Grant Access</title>
 
     <!-- Bootstrap -->
     <link rel="stylesheet" type="text/css" th:href="@{/css/bootstrap.min.css}" />
@@ -17,7 +17,9 @@
 <body>
 <nav class="navbar navbar-light bg-light">
     <a class="navbar-brand" th:href="@{${application.obp_url}}">
-        <img th:src="@{/images/bank-logo.png}" height="60" class="d-inline-block align-top" alt="">
+        <img th:if="${showBankLogo == 'true'}" th:src="@{${bankLogoUrl}}" height="55" class="d-inline-block align-top" alt=""></img>
+        <img th:unless="${showBankLogo == 'true'}" th:src="@{/images/logo.png}" height="55" class="d-inline-block align-top" alt=""></img>
+        <span class="badge badge-primary">ASPSP</span>
     </a>
 </nav>
     <div class="container">
@@ -47,7 +49,19 @@
                                     <div class="checkbox" th:each="account : ${accounts}">
                                         <label>
                                             <div class="invisible"> <!-- https://getbootstrap.com/docs/4.0/utilities/visibility/ -->
-                                                <input type="checkbox" name="accounts" th:value="${account.id}" checked readonly>
+                                                <input type="checkbox" name="accounts" th:value="${account.id}" onclick="return false;" checked readonly>
+                                            </div>
+                                            <span th:text="${account.label}">Some account</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div th:case="'OBP'" class="row">
+                                <div>
+                                    <div class="checkbox" th:each="account : ${accounts}">
+                                        <label>
+                                            <div class="invisible"> <!-- https://getbootstrap.com/docs/4.0/utilities/visibility/ -->
+                                                <input type="checkbox" name="accounts" th:value="${account.id}" onclick="return false;" checked readonly>
                                             </div>
                                             <span th:text="${account.label}">Some account</span>
                                         </label>

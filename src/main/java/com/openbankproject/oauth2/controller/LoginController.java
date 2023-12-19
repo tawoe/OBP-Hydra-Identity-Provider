@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
 public class LoginController implements ServletContextAware {
     private static Logger logger = LoggerFactory.getLogger(LoginController.class);
 
-    @Value("${obp.base_url}")
+    @Value("${obp.base_url:#}")
     private String obpBaseUrl;
 
     @Value("${obp.base_url}/my/logins/direct")
@@ -64,6 +64,11 @@ public class LoginController implements ServletContextAware {
     @Value("${button.hover.background_color:#b92c28}")
     private String buttonHoverBackgroundColor;
 
+    @Value("${logo.bank.enabled:false}")
+    private String showBankLogo;
+    @Value("${logo.bank.url:#}")
+    private String bankLogoUrl;
+    
     /**
      * initiate global variable
      * @param servletContext
@@ -80,38 +85,54 @@ public class LoginController implements ServletContextAware {
         model.addAttribute("login_challenge", login_challenge);
         model.addAttribute("buttonBackgroundColor", buttonBackgroundColor);
         model.addAttribute("buttonHoverBackgroundColor", buttonHoverBackgroundColor);
+        model.addAttribute("showBankLogo", showBankLogo);
+        model.addAttribute("obpBaseUrl", obpBaseUrl);
+        model.addAttribute("bankLogoUrl", bankLogoUrl);
 
         try {
             LoginRequest loginRequest = hydraAdmin.getLoginRequest(login_challenge);
             String requestUrl = loginRequest.getRequestUrl();
+            logger.debug("requestUrl: " + loginRequest.getRequestUrl());
+            String consentRequestId = getConsentRequestId(requestUrl);
             String consentId = getConsentId(requestUrl);
             String bankId = getBankId(requestUrl);
-            String iban = getIban(requestUrl);
-            String recurringIndicator = getRecurringIndicator(requestUrl);
-            String frequencyPerDay = getFrequencyPerDay(requestUrl);
-            String expirationTime = getExpirationTime(requestUrl);
-            String apiStandard = getApiStandard(requestUrl);
-            final List<String> acrValues = loginRequest.getOidcContext().getAcrValues();
-            if(bankId == null) {
-                model.addAttribute("errorMsg", "Query parameter `bank_id` is mandatory! ");
-                return "error";
+
+            // OpenID Connect Flow
+            if(consentId == null) {
+                logger.info("OpenID Connect Flow");
+                return "redirect:" + obpBaseUrl + "/user_mgt/login?login_challenge=" + login_challenge;
             }
-            if(consentId  == null) {
-                final String createConsentUrl = getConsentUrl.replace("/CONSENT_ID", "");
-                model.addAttribute(
-                        "errorMsg", "Query parameter `consent_id` is mandatory! " +
-                        "Hint: create client_credentials accessToken, create Account Access Consents by call endpoint `CreateAccountAccessConsents` (" +
-                         createConsentUrl +
-                         "), " +
-                         "with header Authorization: Authorization: Bearer <accessToken>");
-                return "error";
-            }
-            // TODO acr value should do more validation
+            
+            if(consentId.equalsIgnoreCase("Utility-List-Consents")) {
+                session.setAttribute("consent_id", consentId);
+                session.setAttribute("bank_id", bankId);
+            } else {
+                String iban = getIban(requestUrl);
+                String recurringIndicator = getRecurringIndicator(requestUrl);
+                String frequencyPerDay = getFrequencyPerDay(requestUrl);
+                String expirationTime = getExpirationTime(requestUrl);
+                String apiStandard = getApiStandard(requestUrl);
+                final List<String> acrValues = loginRequest.getOidcContext().getAcrValues();
+                if(bankId == null) {
+                    model.addAttribute("errorMsg", "Query parameter `bank_id` is mandatory! ");
+                    return "error";
+                }
+                if(consentId  == null) {
+                    final String createConsentUrl = getConsentUrl.replace("/CONSENT_ID", "");
+                    model.addAttribute(
+                            "errorMsg", "Query parameter `consent_id` is mandatory! " +
+                                    "Hint: create client_credentials accessToken, create Account Access Consents by call endpoint `CreateAccountAccessConsents` (" +
+                                    createConsentUrl +
+                                    "), " +
+                                    "with header Authorization: Authorization: Bearer <accessToken>");
+                    return "error";
+                }
+                // TODO acr value should do more validation
 //            if(CollectionUtils.isEmpty(acrValues)) {
 //                model.addAttribute("errorMsg", "Query parameter `acr_values` is mandatory! ");
 //                return "error";
 //            }
-            // TODO in order make old consumer works, the request and request_uri are optional.
+                // TODO in order make old consumer works, the request and request_uri are optional.
 //            if(!requestUrl.contains("request") && !requestUrl.contains("request_uri")) {
 //                model.addAttribute(
 //                        "errorMsg", "Query parameter `request` and `request_uri` at least one must be supplied! " +
@@ -119,39 +140,40 @@ public class LoginController implements ServletContextAware {
 //                return "error";
 //            }
 
-            try {
-                if(!apiStandard.equalsIgnoreCase("BerlinGroup"))
-                {// validate consentId
-                    Map<String, Object> responseBody = idVerifier.apply(getConsentUrl.replace("CONSENT_ID", consentId));
-                    Map<String, Object> data = ((Map<String, Object>) responseBody.get("Data"));
-                    if(data == null || data.isEmpty()) {
-                        model.addAttribute("errorMsg", "Consent content have no required Data field");
-                        return "error";
-                    }
+                try {
+                    if(apiStandard.equalsIgnoreCase("UKOpenBanking"))
+                    {// validate consentId
+                        Map<String, Object> responseBody = idVerifier.apply(getConsentUrl.replace("CONSENT_ID", consentId));
+                        Map<String, Object> data = ((Map<String, Object>) responseBody.get("Data"));
+                        if(data == null || data.isEmpty()) {
+                            model.addAttribute("errorMsg", "Consent content have no required Data field");
+                            return "error";
+                        }
 
-                    String status = ((String) data.get("Status"));
-                    if(!"AWAITINGAUTHORISATION".equals(status)) {
-                        model.addAttribute("errorMsg", "The Consent status should be AWAITINGAUTHORISATION, but current status is " + status);
-                        return "error";
+                        String status = ((String) data.get("Status"));
+                        if(!"AWAITINGAUTHORISATION".equals(status)) {
+                            model.addAttribute("errorMsg", "The Consent status should be AWAITINGAUTHORISATION, but current status is " + status);
+                            return "error";
+                        }
                     }
+                    {// validate bankId
+                        idVerifier.apply(getBankUrl.replace("BANK_ID", bankId));
+                    }
+                } catch (Exception e) {
+                    model.addAttribute("errorMsg", e.getMessage());
+                    return "error";
                 }
-                {// validate bankId
-                    idVerifier.apply(getBankUrl.replace("BANK_ID", bankId));
-                }
-            } catch (Exception e) {
-                model.addAttribute("errorMsg", e.getMessage());
-                return "error";
+
+                session.setAttribute("consent_request_id", consentRequestId);
+                session.setAttribute("consent_id", consentId);
+                session.setAttribute("bank_id", bankId);
+                session.setAttribute("iban", iban);
+                session.setAttribute("recurring_indicator", recurringIndicator);
+                session.setAttribute("frequency_per_day", frequencyPerDay);
+                session.setAttribute("expiration_time", expirationTime);
+                session.setAttribute("api_standard", apiStandard);
+                session.setAttribute("acr_values", acrValues);
             }
-
-            session.setAttribute("consent_id", consentId);
-            session.setAttribute("bank_id", bankId);
-            session.setAttribute("iban", iban);
-            session.setAttribute("recurring_indicator", recurringIndicator);
-            session.setAttribute("frequency_per_day", frequencyPerDay);
-            session.setAttribute("expiration_time", expirationTime);
-            session.setAttribute("api_standard", apiStandard);
-            session.setAttribute("acr_values", acrValues);
-
             // login before and checked rememberMe.
             if(loginRequest.getSkip() && session.getAttribute("directLoginToken") != null) {
                 AcceptLoginRequest acceptLoginRequest = new AcceptLoginRequest();
@@ -189,8 +211,8 @@ public class LoginController implements ServletContextAware {
         }
         //DirectLogin username="robert.xuk.x@example.com",password="5232e7",consumer_key="yp5tgl0thzjj1jk0sobqljpxyo514dsjvxoe1ngy"
         HttpHeaders headers = new HttpHeaders();
-        headers.add("Authorization",
-                "DirectLogin username=\""+username+"\",password=\""+password+"\",consumer_key=\""+consumerKey+"\""
+        headers.add("DirectLogin",
+                "username=\""+username+"\",password=\""+password+"\",consumer_key=\""+consumerKey+"\""
         );
         HttpEntity<String> entity = new HttpEntity<>(headers);
 
@@ -225,6 +247,7 @@ public class LoginController implements ServletContextAware {
 
     }
 
+    private static final Pattern CONSENT_REQUEST_ID_PATTERN = Pattern.compile(".*?consent_request_id=([^&$]*).*");
     private static final Pattern CONSENT_ID_PATTERN = Pattern.compile(".*?consent_id=([^&$]*).*");
     private static final Pattern BANK_ID_PATTERN = Pattern.compile(".*?bank_id=([^&$]*).*");
     private static final Pattern IBAN_PATTERN = Pattern.compile(".*?iban=([^&$]*).*");
@@ -240,6 +263,19 @@ public class LoginController implements ServletContextAware {
      */
     private String getConsentId(String authRequestUrl) {
         Matcher matcher = CONSENT_ID_PATTERN.matcher(authRequestUrl);
+        if(matcher.matches()) {
+           return matcher.replaceFirst("$1");
+        } else {
+            return null;
+        }
+    }
+    /**
+     * get consent_id query parameter from auth request url
+     * @param authRequestUrl
+     * @return
+     */
+    private String getConsentRequestId(String authRequestUrl) {
+        Matcher matcher = CONSENT_REQUEST_ID_PATTERN.matcher(authRequestUrl);
         if(matcher.matches()) {
            return matcher.replaceFirst("$1");
         } else {
