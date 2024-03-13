@@ -1,4 +1,4 @@
-FROM gcr.io/distroless/java11-debian11
+FROM gcr.io/distroless/java11-debian11:latest
 
 COPY target/hydra-identity-provider-0.0.16-SNAPSHOT.jar /opt/application/identity.jar
 

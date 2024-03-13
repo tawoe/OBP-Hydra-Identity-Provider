@@ -16,7 +16,7 @@ jobs:
           cache: maven
       - name: Build with Maven
         run: |
-          cp docker_application.properties.sample src/main/resources/application.properties
+          cp .github/application.properties.example src/main/resources/application.properties
           mvn package
       - name: Build the Docker image
         run: |

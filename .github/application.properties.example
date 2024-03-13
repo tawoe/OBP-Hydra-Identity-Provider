@@ -1,0 +1,31 @@
+server.port=${SERVER_PORT}
+server.servlet.session.cookie.name=IDENTITY_PROVIDER_SESSION
+
+logging.level.com.openbankproject=${LOG_LEVEL}
+
+spring.thymeleaf.encoding=UTF-8
+spring.thymeleaf.servlet.content-type=text/html;
+
+force_jws=${FORCE_JWS}
+
+# hydra server private url
+oauth2.admin_url=${OAUTH_2_ADMIN_URL}
+
+show_unhandled_errors=true
+
+obp.base_url=${OBP_BASE_URL}
+endpoint.path.prefix=${obp.base_url}/open-banking/v3.1
+
+# add consumer_key from OBP key registration, must have "OpenID client" enabled in case OpenID is activated on the instance.
+consumer_key=${CONSUMER_KEY}
+
+# name and password from a dedicated OBP user (to verify consentId and bankId):
+identity_provider.user.username=${USERNAME}
+identity_provider.user.password=${PASSWORD}
+
+# keystores can be the same files as for Hola App
+mtls.keyStore.path=${KEYSTORE}
+mtls.keyStore.password=${KEYSTORE_PASSWD}
+mtls.keyStore.alias=${KEYSTORE_ALIAS}
+mtls.trustStore.path=${TRUST_STORE}
+mtls.trustStore.password=${TRUST_STORE_PASSWD}
